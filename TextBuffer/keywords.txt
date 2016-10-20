@@ -1,0 +1,35 @@
+#######################################
+# Syntax Coloring Map For TextBuffer
+#######################################
+
+#######################################
+# Library (KEYWORD3)
+#######################################
+
+TextBuffer	KEYWORD3
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+TextBuffer	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+write	KEYWORD2
+write	KEYWORD2
+clear	KEYWORD2
+end	KEYWORD2
+getBuffer	KEYWORD2
+getBufPointer	KEYWORD2
+getSize	KEYWORD2
+getCapacity	KEYWORD2
+getCheckSum KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+#Example1	LITERAL1
