@@ -2,7 +2,7 @@ Arduino sketches and libraries to allow it to act as a virtual Keypad for a DSC 
 -------------------------------------------------------------------------------------------------------------
  - Original DSC Keybus reverse engineering thread http://www.avrfreaks.net/comment/864193
  - Arduino Libraries from **stagf15's** [repositories] (https://github.com/stagf15)
- - How to connect shematic from **emcniece's** [Arduino-Keybus repository] (https://github.com/emcniece/Arduino-Keybus)
+ - Original "how to connect" shematic from **emcniece's** [Arduino-Keybus repository] (https://github.com/emcniece/Arduino-Keybus)
 
 ### How to connect Arduino to DSC Panel
 
@@ -12,7 +12,9 @@ Arduino sketches and libraries to allow it to act as a virtual Keypad for a DSC 
 
 ### How to use
 1. Clone this repository
-2. zip the three directories in three separate zip files (DSCPanel.zip, TextBuffer.zip and Time.zip)
+2. Zip the three directories in three separate zip files (DSCPanel.zip, TextBuffer.zip and Time.zip)
 3. Install it as Arduino libraries
 4. From within the Arduino IDE, choose File --> Examples --> DSCPanel
 5. Upload to the Arduino and watch the Serial Monitor as Panel and Keypad data stream in
+
+`readserial.py` can be used if Arduino is connected via USB to Raspberry Pi, to read the serial data from Arduino.
