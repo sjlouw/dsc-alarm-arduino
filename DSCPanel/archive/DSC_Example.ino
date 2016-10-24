@@ -1,5 +1,8 @@
 // DSC_18XX Arduino Interface - Final
 //
+// This is the final version of this sketch prior to creation of the DSC library
+// It is recomended to use the new .ino sketches as examples with the DSC library
+//
 // Sketch to decode the keybus protocol on DSC PowerSeries 1816, 1832 and 1864 panels
 //   -- Use the schematic at https://github.com/emcniece/Arduino-Keybus to connect the
 //      keybus lines to the arduino via voltage divider circuits.  Don't forget to 

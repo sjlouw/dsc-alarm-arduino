@@ -1,4 +1,4 @@
-﻿/* DSC_Globals.h
+/* DSC_Globals.h
  * Part of DSC Library 
  * See COPYRIGHT.txt and LICENSE.txt for more information.
  *

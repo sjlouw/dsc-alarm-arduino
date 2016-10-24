@@ -15,60 +15,11 @@
 
 DSC dsc;                              // Initialize DSC.h library as "dsc"
 TextBuffer message(128);              // Initialize TextBuffer.h for print/client message
+TextBuffer timeBuf(24);               // Initialize TextBuffer.h for formatted time message
 
-////////// Functions that need declarations prior to Main ///////////
-
-int pnlBinary(String &dataStr)
-{
-  // Formats the referenced string into bytes of binary data in the form:
-  //  8 1 8 8 8 8 8 etc, and then prints each segment 
-  int cSumOk = 0; 
-  if (dataStr.length() > 8) {
-    message.print(dataStr.substring(0,8));
-    message.print(" ");
-    message.print(dataStr.substring(8,9));
-    message.print(" ");
-    int grps = (dataStr.length() - 9) / 8;
-    for(int i=0;i<grps;i++) {
-      message.print(dataStr.substring(9+(i*8),9+(i+1)*8));
-      message.print(" ");
-    }
-    if (dataStr.length() > ((grps*8)+9))
-      message.print(dataStr.substring((grps*8)+9,dataStr.length()));
-  }
-  else {
-    message.print(dataStr);
-  }
-  if (dsc.pnlChkSum(dataStr)) {
-    message.print(" (OK)");
-    cSumOk = 1;
-  }
-  message.println();
-  return cSumOk;
-}
-
-int kpdBinary(String &dataStr)
-{
-  // Formats the referenced string into bytes of binary data in the form:
-  //  8 8 8 8 8 8 etc, and then prints each segment
-  int cSumOk = 0; 
-  if (dataStr.length() > 8) {
-    int grps = dataStr.length() / 8;
-    for(int i=0;i<grps;i++) {
-      message.print(dataStr.substring(i*8,(i+1)*8));
-      message.print(" ");
-    }
-    if (dataStr.length() > (grps*8))
-      message.print(dataStr.substring((grps*8),dataStr.length()));
-  }
-  else {
-    message.print(dataStr);
-  }
-  message.println();
-  return cSumOk;
-}
-
-/////////// ------------------------------------------- /////////////
+// --------------------------------------------------------------------------------------------------------
+// -----------------------------------------------  SETUP  ------------------------------------------------
+// --------------------------------------------------------------------------------------------------------
 
 void setup()
 { 
@@ -79,15 +30,16 @@ void setup()
   Serial.println(F("Initializing"));
 
   message.begin();              // Begin the message buffer, allocate memory
+  timeBuf.begin();              // Begin the formatted time buffer, allocate memory
  
   dsc.setCLK(3);    // Sets the clock pin to 3 (example, this is also the default)
                     // setDTA_IN( ), setDTA_OUT( ) and setLED( ) can also be called
   dsc.begin();      // Start the dsc library (Sets the pin modes)
 }
 
-// -----------------------------------------------------------------------------------------------------------------------
-// -------------------------------------------------------  MAIN LOOP  ---------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------
+// ---------------------------------------------  MAIN LOOP  ----------------------------------------------
+// --------------------------------------------------------------------------------------------------------
 
 void loop()
 {  
@@ -102,14 +54,12 @@ void loop()
   // ---------------- Get/process incoming data ----------------
   if (!dsc.process()) return;
 
-  if (dscGlobal.pCmd) {
-    // ------------ Write the panel message to buffer ------------
-    message.clear();                      // Clear the message Buffer (this sets first byte to 0)
-    message.print(F("[Panel]  "));
-    pnlBinary(dscGlobal.pWord);           // Writes formatted raw data to the message buffer
+  if (dsc.timeAvailable) setDscTime();    // Attempt to update the system time
 
+  if (dscGlobal.pCmd) {
     // ------------ Print the formatted raw data ------------
-    Serial.print(message.getBuffer());
+    //Serial.print(message.getBuffer());  // Prints unformatted word to serial
+    Serial.println(dsc.pnlFormat());
 
     message.clear();                      // Clear the message Buffer (this sets first byte to 0)
     message.print(formatTime(now()));     // Add the time stamp
@@ -127,13 +77,9 @@ void loop()
   }
 
   if (dscGlobal.kCmd) {
-    // ------------ Write the keypad message to buffer ------------
-    message.clear();                      // Clear the message Buffer (this sets first byte to 0)
-    message.print(F("[Keypad] "));
-    kpdBinary(dscGlobal.kWord);           // Writes formatted raw data to the message buffer
-
     // ------------ Print the formatted raw data ------------
-    Serial.print(message.getBuffer());
+    //Serial.print(message.getBuffer());  // Prints unformatted word to serial
+    Serial.println(dsc.kpdFormat());
   
     message.clear();                      // Clear the message Buffer (this sets first byte to 0)
     message.print(formatTime(now()));     // Add the time stamp
@@ -151,15 +97,31 @@ void loop()
   }
 }
 
-// -----------------------------------------------------------------------------------------------------------------------
-// -------------------------------------------------------  FUNCTIONS  ---------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------------------------
+// ---------------------------------------------  FUNCTIONS  ----------------------------------------------
+// --------------------------------------------------------------------------------------------------------
 
+
+const char* formatTime(time_t cTime)
+{
+  timeBuf.clear();
+  timeBuf.print(digits(hour(cTime)));     timeBuf.print(":");
+  timeBuf.print(digits(minute(cTime)));   timeBuf.print(":");
+  timeBuf.print(digits(second(cTime)));   timeBuf.print(", ");
+  timeBuf.print(month(cTime));            timeBuf.print("/");
+  timeBuf.print(day(cTime));              timeBuf.print("/");
+  timeBuf.print(year(cTime)); 
+
+  return timeBuf.getBuffer();
+}
+
+/* // OLD formatTime - String was unstable
 String formatTime(time_t cTime)
 {
   return digits(hour(cTime)) + ":" + digits(minute(cTime)) + ":" + digits(second(cTime)) + ", " +
          String(month(cTime)) + "/" + String(day(cTime)) + "/" + String(year(cTime));  //+ "/20" 
 }
+*/
 
 String digits(unsigned int val)
 {
@@ -168,6 +130,17 @@ String digits(unsigned int val)
   else return String(val);
 }
 
-// -----------------------------------------------------------------------------------------------------------------------
-// ----------------------------------------------------------  END  ------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------
+void setDscTime()
+{
+  setTime(dsc.HH,dsc.MM,dsc.SS,dsc.dd,dsc.mm,dsc.yy);
+  if (timeStatus() == timeSet) {
+    Serial.println(F("Time Synchronized"));
+  }
+  else {
+    Serial.println(F("Time Sync Error"));
+  } 
+}
+
+// --------------------------------------------------------------------------------------------------------
+// ------------------------------------------------  END  -------------------------------------------------
+// --------------------------------------------------------------------------------------------------------

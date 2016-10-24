@@ -1,4 +1,4 @@
-﻿/* DSC_Constants.h
+/* DSC_Constants.h
  * Part of DSC Library 
  * See COPYRIGHT.txt and LICENSE.txt for more information.
  *
@@ -13,9 +13,10 @@
 #define DSC_Constants_h
 
 // ----- Word/Timing Constants -----
-const byte MAX_BITS = 200;        // Max of 254
+const byte MAX_BITS = 128;        // The length at which to overflow (max 255)
+const byte WORD_BITS = 108;       // The expected length of a word (max 255)
 const int NEW_WORD_INTV = 5200;   // New word indicator interval in us (Microseconds)
-const byte ARR_SIZE = 14;         // Max of 254   // NOT USED
+const byte ARR_SIZE = 12;         // (max 255)   // NOT USED
 
 // ------ HEX LOOK-UP ARRAY ------
 const char hex[] = "0123456789abcdef";  // HEX alphanumerics look-up array

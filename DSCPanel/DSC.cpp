@@ -1,9 +1,10 @@
-﻿#include "Arduino.h"
+#include "Arduino.h"
 #include "DSC.h"
 #include "DSC_Constants.h"
 #include "DSC_Globals.h"
-#include <TimeLib.h>
+#include <TextBuffer.h>
 
+/// ----- GLOBAL VARIABLES -----
 /*
  * The existence of global variables are "declared" in DSC_Global.h, so that each 
  * source file that includes the header knows about them. The variables must then be
@@ -23,18 +24,31 @@ byte LED;         // LED pin on the arduino
 
 void clkCalled_Handler(); // Prototype for interrupt handler, called on clock line change
 
+TextBuffer tempByte(12);        // Initialize TextBuffer.h for temp byte buffer 
+TextBuffer pInfo(WORD_BITS);    // Initialize TextBuffer.h for panel info
+TextBuffer kInfo(WORD_BITS);    // Initialize TextBuffer.h for keypad info
+
+/// --- END GLOBAL VARIABLES ---
+
 DSC::DSC(void)
   {
     // ----- Time Variables -----
-    // Volatile variables, modified within ISR
+    // Volatile variables, modified within ISR, based on micros()
     dscGlobal.intervalTimer = 0;   
     dscGlobal.clockChange = 0;
     dscGlobal.lastChange = 0;      
-    dscGlobal.lastRise = 0;        // NOT USED
-    dscGlobal.lastFall = 0;        // NOT USED
-    dscGlobal.newWord = false;     // NOT USED
+    dscGlobal.lastRise = 0;         // NOT USED YET
+    dscGlobal.lastFall = 0;         // NOT USED YET
+    dscGlobal.newWord = false;      // NOT USED YET
+    
+    // Time variables, based on millis()
+    dscGlobal.lastStatus = 0;
+    dscGlobal.lastData = 0;
 
-    // ------ PUBLIC VARIABLES ------
+    // Class level variables to hold time elements
+    int yy = 0, mm = 0, dd = 0, HH = 0, MM = 0, SS = 0;
+    bool timeAvailable = false;     // Changes to true when kCmd == 0xa5 to 
+                                    // indicate that the time elements are valid
 
     // ----- Input/Output Pins (DEFAULTS) ------
     //   These can be changed prior to DSC.begin() using functions below
@@ -43,16 +57,12 @@ DSC::DSC(void)
     DTA_OUT  = 8;    // Keybus Green Output (Data Line through driver)
     LED      = 13;   // LED pin on the arduino
 
-    // ----- Time Variables -----
-    dscGlobal.lastStatus = 0;
-    dscGlobal.lastData = 0;
-
     // ----- Keybus Word String Vars -----
     dscGlobal.pBuild="", dscGlobal.pWord="";
     dscGlobal.oldPWord="", dscGlobal.pMsg="";
     dscGlobal.kBuild="", dscGlobal.kWord="";
     dscGlobal.oldKWord="", dscGlobal.kMsg="";
-    dscGlobal.pCmd, dscGlobal.kCmd = 0;
+    dscGlobal.pCmd = 0, dscGlobal.kCmd = 0;
 
     // ----- Byte Array Variables -----
     //dscGlobal.pBytes[ARR_SIZE] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};    // NOT USED
@@ -70,6 +80,10 @@ void DSC::begin(void)
     pinMode(DTA_OUT, OUTPUT);
     pinMode(LED, OUTPUT);
 
+    tempByte.begin();         // Begin the tempByte buffer, allocate memory
+    pInfo.begin();            // Begin the panel info buffer, allocate memory
+    kInfo.begin();            // Begin the keypad info buffer, allocate memory
+
     // Set the interrupt pin
     intrNum = digitalPinToInterrupt(CLK);
 
@@ -78,21 +92,62 @@ void DSC::begin(void)
     //   Changed from RISING to CHANGE to read both panel and keypad data
   }
 
+/* This is the interrupt handler used by this class. It is called every time the input
+ * pin changes from high to low or from low to high.
+ *
+ * The function is not a member of the DSC class, it must be in the global scope in order 
+ * to be called by attachInterrupt() from within the DSC class.
+ */
+void clkCalled_Handler()
+  {
+    dscGlobal.clockChange = micros();                   // Save the current clock change time
+    dscGlobal.intervalTimer = 
+        (dscGlobal.clockChange - dscGlobal.lastChange); // Determine interval since last clock change
+
+    // If the interval is longer than the required amount (NEW_WORD_INTV - 200 us)
+    if (dscGlobal.intervalTimer > (NEW_WORD_INTV - 200)) {
+      dscGlobal.kWord = dscGlobal.kBuild;               // Save the complete keypad raw data bytes sentence
+      dscGlobal.kBuild = "";                            // Reset the raw data bytes keypad word being built
+    }
+    dscGlobal.lastChange = dscGlobal.clockChange;       // Re-save the current change time as last change time
+
+    // If clock line is going HIGH, this is PANEL data
+    if (digitalRead(CLK)) {                
+      dscGlobal.lastRise = dscGlobal.lastChange;        // Set the lastRise time
+      if (dscGlobal.pBuild.length() <= MAX_BITS) {      // Limit the string size to something manageable
+        //delayMicroseconds(120);           // Delay for 120 us to get a valid data line read
+        if (digitalRead(DTA_IN)) dscGlobal.pBuild += "1"; 
+        else dscGlobal.pBuild += "0";
+      }
+    }
+    // Otherwise, it's going LOW, this is KEYPAD data
+    else {                                  
+      dscGlobal.lastFall = dscGlobal.lastChange;          // Set the lastFall time
+      if (dscGlobal.kBuild.length() <= MAX_BITS) {        // Limit the string size to something manageable 
+        //delayMicroseconds(200);           // Delay for 300 us to get a valid data line read
+        if (digitalRead(DTA_IN)) dscGlobal.kBuild += "1"; 
+        else dscGlobal.kBuild += "0";
+      }
+    }
+  }
+
 int DSC::process(void)
   {
+    // ------------ Get/process incoming data -------------
+    dscGlobal.pCmd = 0, 
+    dscGlobal.kCmd = 0; 
+    timeAvailable = false;      // Set the time element status to invalid
+    
     // ----------------- Turn on/off LED ------------------
     if ((millis() - dscGlobal.lastStatus) > 500)
       digitalWrite(LED, 0);     // Turn LED OFF (no recent status command [0x05])
     else
       digitalWrite(LED, 1);     // Turn LED ON  (recent status command [0x05])
     
-    // ---------------- Get/process incoming data ----------------
-    //dscGlobal.pCmd, dscGlobal.kCmd = 0;  // THIS PROBABLY SHOULDN'T BE HERE!!!
-    
     /*
      * The normal clock frequency is 1 Hz or one cycle every ms (1000 us) 
      * The new word marker is clock high for about 15 ms (15000 us)
-     * If the interval is longer than the required amount (NEW_WORD_INTV), 
+     * If the interval is longer than the required amount (NEW_WORD_INTV + 200 us), 
      * and the panel word in progress (pBuild) is more than 8 characters long,
      * process the panel and keypad words, otherwise return failure (0).
      */
@@ -102,8 +157,10 @@ int DSC::process(void)
     dscGlobal.pWord = dscGlobal.pBuild;   // Save the complete panel raw data bytes sentence
     dscGlobal.pBuild = "";                // Reset the raw data panel word being built
     dscGlobal.pMsg = "";                  // Initialize panel message for output
-    dscGlobal.kMsg = "";                  // Initialize keypad message for output
-    dscGlobal.pCmd, dscGlobal.kCmd = 0;
+    //dscGlobal.pCmd = 0;
+    
+    dscGlobal.kMsg = "";                  // Initialize keypad message for output 
+    //dscGlobal.kCmd = 0;
     
     dscGlobal.pCmd = decodePanel();       // Decode the panel binary, return command byte, or 0
     dscGlobal.kCmd = decodeKeypad();      // Decode the keypad binary, return command byte, or 0
@@ -117,7 +174,7 @@ int DSC::process(void)
 byte DSC::decodePanel(void) 
   {
     // ------------- Process the Panel Data Word ---------------
-    byte cmd = binToInt(dscGlobal.pWord,0,8);       // Get the panel pCmd (data word type/command)
+    byte cmd = binToInt(dscGlobal.pWord,0,8);   // Get the panel pCmd (data word type/command)
     
     if (dscGlobal.pWord == dscGlobal.oldPWord || cmd == 0x00) {
       // Skip this word if the data hasn't changed, or pCmd is empty (0x00)
@@ -125,13 +182,13 @@ byte DSC::decodePanel(void)
     }
     else {     
       // This seems to be a valid word, try to process it  
-      dscGlobal.lastData = millis();                // Record the time (last data word was received)
-      dscGlobal.oldPWord = dscGlobal.pWord;                   // This is a new/good word, save it
+      dscGlobal.lastData = millis();            // Record the time (last data word was received)
+      dscGlobal.oldPWord = dscGlobal.pWord;     // This is a new/good word, save it
      
       // Interpret the data
       if (cmd == 0x05) 
       {
-        dscGlobal.lastStatus = millis();            // Record the time for LED logic
+        dscGlobal.lastStatus = millis();        // Record the time for LED logic
         dscGlobal.pMsg += F("[Status] ");
         if (binToInt(dscGlobal.pWord,16,1)) {
           dscGlobal.pMsg += F("Ready");
@@ -152,21 +209,13 @@ byte DSC::decodePanel(void)
         dscGlobal.pMsg += F("[Info] ");
         int y3 = binToInt(dscGlobal.pWord,9,4);
         int y4 = binToInt(dscGlobal.pWord,13,4);
-        int yy = (String(y3) + String(y4)).toInt();
-        int mm = binToInt(dscGlobal.pWord,19,4);
-        int dd = binToInt(dscGlobal.pWord,23,5);
-        int HH = binToInt(dscGlobal.pWord,28,5);
-        int MM = binToInt(dscGlobal.pWord,33,6);
-        
-        setTime(HH,MM,0,dd,mm,yy);
-        if (timeStatus() == timeSet) {
-          Serial.println(F("Time Synchronized"));
-          dscGlobal.pMsg += F("Time Sync ");
-        }
-        else {
-          Serial.println(F("Time Sync Error"));
-          dscGlobal.pMsg += F("Time Sync Error ");
-        }      
+        yy = (String(y3) + String(y4)).toInt();
+        mm = binToInt(dscGlobal.pWord,19,4);
+        dd = binToInt(dscGlobal.pWord,23,5);
+        HH = binToInt(dscGlobal.pWord,28,5);
+        MM = binToInt(dscGlobal.pWord,33,6);     
+
+        timeAvailable = true;      // Set the time element status to valid
 
         byte arm = binToInt(dscGlobal.pWord,41,2);
         byte master = binToInt(dscGlobal.pWord,43,1);
@@ -351,46 +400,87 @@ byte DSC::decodeKeypad(void)
     }
   }
 
-/* This is the interrupt handler used by this class. It is called every time the input
- * pin changes from high to low or from low to high.
- *
- * The function is not a member of the DSC class, it must be in the global scope in order 
- * to be called by attachInterrupt() from within the DSC class.
- */
-void clkCalled_Handler()
+const char* DSC::pnlFormat(void)
   {
-    dscGlobal.clockChange = micros();                   // Save the current clock change time
-    dscGlobal.intervalTimer = 
-        (dscGlobal.clockChange - dscGlobal.lastChange); // Determine interval since last clock change
-    //if (intervalTimer > NEW_WORD_INTV) newWord = true;
-    //else newWord = false;
-    if (dscGlobal.intervalTimer > (NEW_WORD_INTV - 200)) {
-      dscGlobal.kWord = dscGlobal.kBuild;               // Save the complete keypad raw data bytes sentence
-      dscGlobal.kBuild = "";                            // Reset the raw data bytes keypad word being built
-    }
-    dscGlobal.lastChange = dscGlobal.clockChange;       // Re-save the current change time as last change time
+    if (!dscGlobal.pCmd) return NULL;       // return failure
+    // Formats the panel binary string into bytes of binary data in the form:
+    // 8 1 8 8 8 8 8 etc, and returns a pointer to the buffer 
+    pInfo.clear();
+    pInfo.print("[Panel]  ");
 
-    if (digitalRead(CLK)) {                 // If clock line is going HIGH, this is PANEL data
-      dscGlobal.lastRise = dscGlobal.lastChange;        // Set the lastRise time
-      if (dscGlobal.pBuild.length() <= MAX_BITS) {      // Limit the string size to something manageable
-        //delayMicroseconds(120);           // Delay for 120 us to get a valid data line read
-        if (digitalRead(DTA_IN)) dscGlobal.pBuild += "1"; 
-        else dscGlobal.pBuild += "0";
+    if (dscGlobal.pWord.length() > 8) {
+      pInfo.print(binToChar(dscGlobal.pWord, 0, 8));
+      pInfo.print(" ");
+      pInfo.print(binToChar(dscGlobal.pWord, 8, 9));
+      pInfo.print(" ");
+      int grps = (dscGlobal.pWord.length() - 9) / 8;
+      for(int i=0;i<grps;i++) {
+        pInfo.print(binToChar(dscGlobal.pWord, 9+(i*8),9+(i+1)*8));
+        pInfo.print(" ");
       }
+      if (dscGlobal.pWord.length() > ((grps*8)+9))
+        pInfo.print(binToChar(dscGlobal.pWord, (grps*8)+9, dscGlobal.pWord.length()));
     }
-    else {                                  // Otherwise, it's going LOW, this is KEYPAD data
-      dscGlobal.lastFall = dscGlobal.lastChange;          // Set the lastFall time
-      if (dscGlobal.kBuild.length() <= MAX_BITS) {        // Limit the string size to something manageable 
-        //delayMicroseconds(200);           // Delay for 300 us to get a valid data line read
-        if (digitalRead(DTA_IN)) dscGlobal.kBuild += "1"; 
-        else dscGlobal.kBuild += "0";
-      }
-    }
+    else
+      pInfo.print(binToChar(dscGlobal.pWord, 0, dscGlobal.pWord.length()));
+
+    if (pnlChkSum(dscGlobal.pWord)) pInfo.print(" (OK)");
+
+    return pInfo.getBuffer();               // return the pointer
   }
 
-// int pnlBinary
+const char* DSC::pnlRaw(void)
+  {
+    if (!dscGlobal.pCmd) return NULL;       // return failure
+    // Puts the raw word into a buffer and returns a pointer to the buffer
+    pInfo.clear();
+    pInfo.print("[Panel]  ");
+    
+    for(int i=0;i<dscGlobal.pWord.length();i++) {
+      pInfo.print(dscGlobal.pWord[i]);
+    }
+    
+    if (pnlChkSum(dscGlobal.pWord)) pInfo.print(" (OK)");
+    
+    return pInfo.getBuffer();               // return the pointer
+  }
 
-// int kpdBinary
+const char* DSC::kpdRaw(void)
+  {
+    if (!dscGlobal.kCmd) return NULL;       // return failure
+    // Puts the raw word into a buffer and returns a pointer to the buffer
+    kInfo.clear();
+    kInfo.print("[Keypad] ");
+    
+    for(int i=0;i<dscGlobal.kWord.length();i++) {
+      kInfo.print(dscGlobal.kWord[i]);
+    }
+    
+    return kInfo.getBuffer();               // return the pointer
+  }
+
+const char* DSC::kpdFormat(void)
+  {
+    if (!dscGlobal.kCmd) return NULL;       // return failure
+    // Formats the referenced string into bytes of binary data in the form:
+    // 8 8 8 8 8 8 etc, and returns a pointer to the buffer 
+    kInfo.clear();
+    kInfo.print("[Keypad] ");
+    
+    if (dscGlobal.kWord.length() > 8) {
+      int grps = dscGlobal.kWord.length() / 8;
+      for(int i=0;i<grps;i++) {
+        kInfo.print(binToChar(dscGlobal.kWord, i*8,(i+1)*8));
+        kInfo.print(" ");
+      }
+      if (dscGlobal.kWord.length() > (grps*8))
+        kInfo.print(binToChar(dscGlobal.kWord, (grps*8),dscGlobal.kWord.length()));
+    }
+    else
+      kInfo.print(binToChar(dscGlobal.kWord, 0, dscGlobal.kWord.length()));
+
+    return kInfo.getBuffer();               // return the pointer
+  }
 
 int DSC::pnlChkSum(String &dataStr)
   {
@@ -404,7 +494,7 @@ int DSC::pnlChkSum(String &dataStr)
         if (i<(grps-1)) 
           cSum += binToInt(dataStr,9+(i*8),8);
         else {
-          byte cSumMod = cSum / 256;
+          byte cSumMod = cSum % 256;
           //String cSumStr = String(chkSum, HEX);
           //int cSumLen = cSumStr.length();
           byte lastByte = binToInt(dataStr,9+(i*8),8);
@@ -429,6 +519,17 @@ unsigned int DSC::binToInt(String &dataStr, int offset, int dataLen)
       if (dataStr[offset+j] == '1') iBuf |= 1;
     }
     return iBuf;
+  }
+
+const char* DSC::binToChar(String &dataStr, int offset, int endData)
+  {   
+    tempByte.clear();
+    // Returns a char array of the binary data in the String from "offset" to "endData"
+    tempByte.print(dataStr[offset]);
+    for(int j=1;j<(endData-offset);j++) {
+      tempByte.print(dataStr[offset+j]);
+    }
+    return tempByte.getBuffer();
   }
 
 String DSC::byteToBin(byte b)
